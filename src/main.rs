@@ -1,31 +1,34 @@
 #[macro_use]
 extern crate penrose;
 
-use std::collections::HashMap;
+use my_penrose::ProcessHolder;
 
-use once_cell::sync::OnceCell;
 use penrose::{
     core::{
-        bindings::KeyCode,
         config::Config,
-        helpers::{index_selectors, keycodes_from_xmodmap, spawn},
+        helpers::{index_selectors, spawn},
         layout, Layout,
     },
     logging_error_handler,
-    xcb::{helpers::parse_key_binding, new_xcb_backed_window_manager},
-    Backward, Forward, Less, More, PenroseError, WindowManager, XcbConnection,
+    xcb::new_xcb_backed_window_manager,
+    Backward, Forward, Less, More, PenroseError,
 };
 
 use simplelog::{LevelFilter, SimpleLogger};
 
 // Spawning background/setup stuff
 // If something fails, don't start the WM
-fn setup() -> penrose::Result<()> {
-    // Commands that run at startup
+fn setup() -> penrose::Result<ProcessHolder> {
+    // Commands that run to completion
     const WALLPAPER: &str = "feh --bg-fill /home/niloco/pics/pawel-blue.jpg";
-
     spawn(WALLPAPER)?;
-    Ok(())
+
+    // Long running stuff (like picom)
+    const COMPOSITOR: &str = "picom";
+    let mut proc_handles = ProcessHolder::new();
+    proc_handles.spawn_long(COMPOSITOR)?;
+
+    Ok(proc_handles)
 }
 
 // Defining my layouts
@@ -51,82 +54,6 @@ fn layouts() -> Vec<Layout> {
             0.6,
         ),
     ]
-}
-
-#[derive(Clone, Copy)]
-enum KbState {
-    On,
-    Off,
-}
-
-impl KbState {
-    pub fn new() -> Self {
-        Self::Off
-    }
-
-    pub fn toggle(state: Self) -> penrose::Result<Self> {
-        const ON_COMMAND: &str = "setxkbmap -model pc105 -layout us -option ctrl:swapcaps";
-        const OFF_COMMAND: &str = "setxkbmap -model pc105 -layout us -option";
-
-        match state {
-            Self::On => {
-                spawn(OFF_COMMAND)?;
-                Ok(Self::Off)
-            }
-            Self::Off => {
-                spawn(ON_COMMAND)?;
-                Ok(Self::On)
-            }
-        }
-    }
-}
-
-struct KbToggle {
-    state: KbState,
-}
-
-impl KbToggle {
-    pub fn new() -> Self {
-        Self {
-            state: KbState::new(),
-        }
-    }
-
-    // toggles the returns new state
-    pub fn toggle(&mut self) -> penrose::Result<()> {
-        self.state = KbState::toggle(self.state)?;
-        Ok(())
-    }
-}
-
-// boilerplate for more customizable bindings
-fn add_binding(
-    code: &str,
-    key_bindings: &mut HashMap<
-        KeyCode,
-        Box<dyn FnMut(&mut WindowManager<XcbConnection>) -> Result<(), PenroseError>>,
-    >,
-    callback: Box<dyn FnMut(&mut WindowManager<XcbConnection>) -> Result<(), PenroseError>>,
-) -> penrose::Result<()> {
-    static CODES: OnceCell<HashMap<String, u8>> = OnceCell::new();
-    let codes = CODES.get_or_init(|| keycodes_from_xmodmap());
-
-    match parse_key_binding(code, &codes) {
-        // would be a lot cleaner with try_insert...
-        Some(key_code) => key_bindings
-            .insert(key_code, callback)
-            // None means empty, aka no dupes
-            .is_none()
-            .then(|| ())
-            .ok_or(PenroseError::Raw(format!(
-                "{} has already been bound",
-                code
-            ))),
-        None => Err(PenroseError::Raw(format!(
-            "{} is not a valid key binding",
-            code
-        ))),
-    }
 }
 
 fn main() -> penrose::Result<()> {
@@ -167,9 +94,7 @@ fn main() -> penrose::Result<()> {
     const BACKLIGHT_RAISE: &str = "brightnessctl set +2%";
     const BACKLIGHT_LOWER: &str = "brightnessctl set 2%-";
 
-    let mut toggler = KbToggle::new();
-
-    let mut key_bindings = gen_keybindings! {
+    let key_bindings = gen_keybindings! {
         // Program launcher
         "M-space" => run_external!(LAUNCHER);
 
@@ -199,8 +124,8 @@ fn main() -> penrose::Result<()> {
 
         // workspace management
         "M-Tab" => run_internal!(toggle_workspace);
-        "M-semicolon" => run_internal!(cycle_workspace, Forward);
-        "M-apostrophe" => run_internal!(cycle_workspace, Backward);
+        "M-C-j" => run_internal!(cycle_workspace, Forward);
+        "M-C-k" => run_internal!(cycle_workspace, Backward);
 
         // Layout management
         "M-m" => run_internal!(cycle_layout, Forward);
@@ -214,15 +139,6 @@ fn main() -> penrose::Result<()> {
             "M-S-{}" => client_to_workspace [ index_selectors(config.workspaces().len()) ];
         };
     };
-
-    // hand-rolled bindings
-
-    // swaps capslock and left control
-    add_binding(
-        "M-t",
-        &mut key_bindings,
-        Box::new(move |_| toggler.toggle()),
-    )?;
 
     let mut wm = new_xcb_backed_window_manager(config, vec![], logging_error_handler())?;
     setup()?;
