@@ -10,67 +10,84 @@ use penrose::{
     PenroseError, WindowManager, XcbConnection,
 };
 
-// for spawning long running programs
-pub struct ProcessHolder {
-    procs: Vec<Child>,
+#[macro_use]
+extern crate tracing;
+
+// For spawning commands, capturing the output in /tmp/{cmd}.
+// Can also spawn long-running processes (ie compositors) that will be killed on penrose exit.
+pub struct SpawnHelper {
+    procs: Vec<(String, Child)>,
 }
 
-impl ProcessHolder {
+impl SpawnHelper {
     pub fn new() -> Self {
         Self { procs: Vec::new() }
     }
 
-    pub fn spawn_long<S: Into<String>>(&mut self, cmd: S) -> penrose::Result<()> {
-        let s = cmd.into();
-        let parts: Vec<&str> = s.split_whitespace().collect();
-        let result = if parts.len() > 1 {
+    pub fn spawn_short(cmd: &str) -> penrose::Result<()> {
+        let mut proc = Self::spawn(cmd)?;
+        let status = proc.wait()?;
+        if status.success() {
+            info!("Command {} has run successfully", cmd);
+            Ok(())
+        } else {
+            Err(PenroseError::Raw(format!(
+                "Command {} terminated with non-zero exit status: {}",
+                cmd, status
+            )))
+        }
+    }
+
+    pub fn spawn_long(&mut self, cmd: &str) -> penrose::Result<()> {
+        match Self::spawn(cmd) {
+            Ok(proc) => {
+                info!(
+                    "Command {} spawned successfully with PID {}",
+                    cmd,
+                    proc.id()
+                );
+                self.procs.push((cmd.to_string(), proc));
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn spawn(cmd: &str) -> std::io::Result<Child> {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        let output_path = format!("/tmp/{}", parts[0]);
+        let output_file = std::fs::File::create(&output_path)?;
+
+        if parts.len() > 1 {
             Command::new(parts[0])
                 .args(&parts[1..])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stdout(output_file.try_clone()?)
+                .stderr(output_file)
                 .spawn()
         } else {
             Command::new(parts[0])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
-        };
-
-        match result {
-            Ok(proc) => {
-                self.procs.push(proc);
-                Ok(())
-            }
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    pub fn spawn_long_with_args<S: Into<String>>(
-        &mut self,
-        cmd: S,
-        args: &[&str],
-    ) -> penrose::Result<()> {
-        let result = Command::new(cmd.into())
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-
-        match result {
-            Ok(proc) => {
-                self.procs.push(proc);
-                Ok(())
-            }
-            Err(e) => Err(e.into()),
         }
     }
 }
 
-impl Drop for ProcessHolder {
+impl Drop for SpawnHelper {
     fn drop(&mut self) {
-        for child in self.procs.as_mut_slice() {
-            if let Err(e) = child.kill() {
-                println!("{:?}", e)
+        for (cmd, proc) in self.procs.as_mut_slice() {
+            match proc.kill() {
+                Ok(_) => info!(
+                    "Command {} with PID {} shutdown successfully",
+                    cmd,
+                    proc.id()
+                ),
+                Err(e) => error!(
+                    "Command {} with PID {} could not be killed: {:?}",
+                    cmd,
+                    proc.id(),
+                    e
+                ),
             }
         }
     }

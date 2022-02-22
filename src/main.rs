@@ -1,31 +1,28 @@
 #[macro_use]
 extern crate penrose;
 
-use my_penrose::ProcessHolder;
+#[macro_use]
+extern crate tracing;
+
+use my_penrose::SpawnHelper;
 
 use penrose::{
-    core::{
-        config::Config,
-        helpers::{index_selectors, spawn},
-        layout, Layout,
-    },
+    core::{config::Config, helpers::index_selectors, layout, Layout},
     logging_error_handler,
     xcb::new_xcb_backed_window_manager,
     Backward, Forward, Less, More, PenroseError,
 };
 
-use simplelog::{LevelFilter, SimpleLogger};
-
 // Spawning background/setup stuff
 // If something fails, don't start the WM
-fn setup() -> penrose::Result<ProcessHolder> {
+fn setup() -> penrose::Result<SpawnHelper> {
     // Commands that run to completion
     const WALLPAPER: &str = "feh --bg-fill /home/niloco/pics/pawel-blue.jpg";
-    spawn(WALLPAPER)?;
+    SpawnHelper::spawn_short(WALLPAPER)?;
 
     // Long running stuff (like picom)
     const COMPOSITOR: &str = "picom";
-    let mut proc_handles = ProcessHolder::new();
+    let mut proc_handles = SpawnHelper::new();
     proc_handles.spawn_long(COMPOSITOR)?;
 
     Ok(proc_handles)
@@ -57,11 +54,13 @@ fn layouts() -> Vec<Layout> {
 }
 
 fn main() -> penrose::Result<()> {
-    // Initialise the logger (use LevelFilter::Debug to enable debug logging)
-    SimpleLogger::init(LevelFilter::Info, simplelog::Config::default()).map_err(|e| {
-        let msg = format!("unable to set log level: {}", e);
-        PenroseError::Raw(msg)
-    })?;
+    tracing_subscriber::fmt::fmt()
+        .with_env_filter("trace")
+        .try_init()
+        .map_err(|e| {
+            let raw_err = format!("{:?}", e);
+            PenroseError::Raw(raw_err)
+        })?;
 
     // Aesthetic stuff
     const FOCUSED_BORDER_COLOR: u32 = 0xbb9af7;
@@ -141,6 +140,6 @@ fn main() -> penrose::Result<()> {
     };
 
     let mut wm = new_xcb_backed_window_manager(config, vec![], logging_error_handler())?;
-    setup()?;
+    let _procs = setup()?;
     wm.grab_keys_and_run(key_bindings, map! {})
 }
