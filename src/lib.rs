@@ -105,7 +105,7 @@ pub fn add_binding(
     static CODES: OnceCell<HashMap<String, u8>> = OnceCell::new();
     let codes = CODES.get_or_init(|| keycodes_from_xmodmap());
 
-    match parse_key_binding(code, &codes) {
+    match parse_key_binding(code.to_string(), &codes) {
         // would be a lot cleaner with try_insert...
         Some(key_code) => key_bindings
             .insert(key_code, callback)

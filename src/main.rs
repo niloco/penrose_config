@@ -1,9 +1,6 @@
 #[macro_use]
 extern crate penrose;
 
-#[macro_use]
-extern crate tracing;
-
 use my_penrose::SpawnHelper;
 
 use penrose::{
@@ -43,7 +40,7 @@ fn layouts() -> Vec<Layout> {
             layout::LayoutConf {
                 floating: false,
                 gapless: true,
-                follow_focus: true,
+                follow_focus: false,
                 allow_wrapping: true,
             },
             layout::monocle,
@@ -63,8 +60,8 @@ fn main() -> penrose::Result<()> {
         })?;
 
     // Aesthetic stuff
-    const FOCUSED_BORDER_COLOR: u32 = 0xbb9af7;
-    const UNFOCUSED_BORDER_COLOR: u32 = 0xa9b1d6;
+    const FOCUSED_BORDER_COLOR: &str = "#bb9af7ff";
+    const UNFOCUSED_BORDER_COLOR: &str = "#a9b1d6ff";
     const BORDER_SIZE: u32 = 4;
     const BAR_HEIGHT: u32 = 0;
 
@@ -74,7 +71,9 @@ fn main() -> penrose::Result<()> {
     let config = config_builder
         .border_px(BORDER_SIZE)
         .focused_border(FOCUSED_BORDER_COLOR)
+        .expect("focused border failed parsing")
         .unfocused_border(UNFOCUSED_BORDER_COLOR)
+        .expect("unfocused border failed parsing")
         .layouts(layouts)
         .bar_height(BAR_HEIGHT)
         .build()
@@ -133,9 +132,9 @@ fn main() -> penrose::Result<()> {
         "M-l" => run_internal!(update_main_ratio, More);
         "M-h" => run_internal!(update_main_ratio, Less);
 
-        refmap [ config.ws_range() ] in {
-            "M-{}" => focus_workspace [ index_selectors(config.workspaces().len()) ];
-            "M-S-{}" => client_to_workspace [ index_selectors(config.workspaces().len()) ];
+        map: { "1", "2", "3", "4", "5", "6", "7", "8", "9" } to index_selectors(9) => {
+            "M-{}" => focus_workspace (REF);
+            "M-S-{}" => client_to_workspace (REF);
         };
     };
 
