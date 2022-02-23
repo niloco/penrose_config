@@ -40,7 +40,7 @@ fn layouts() -> Vec<Layout> {
             layout::LayoutConf {
                 floating: false,
                 gapless: true,
-                follow_focus: false,
+                follow_focus: true,
                 allow_wrapping: true,
             },
             layout::monocle,
@@ -52,6 +52,7 @@ fn layouts() -> Vec<Layout> {
 
 fn main() -> penrose::Result<()> {
     tracing_subscriber::fmt::fmt()
+        .pretty()
         .with_env_filter("trace")
         .try_init()
         .map_err(|e| {

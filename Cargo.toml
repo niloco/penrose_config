@@ -11,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 once_cell = "1.9.0"
 # penrose = "0.2.1"
-penrose = { path = "/home/niloco/code/rust/penrose" }
+penrose = { path = "/home/niloco/code/rust/penrose_fork" }
 simplelog = "0.8"
 tracing-subscriber = { version = "0.3.9", features = ["fmt", "env-filter"] }
 tracing = "0.1"
