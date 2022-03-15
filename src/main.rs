@@ -17,10 +17,17 @@ fn setup() -> penrose::Result<SpawnHelper> {
     const WALLPAPER: &str = "feh --bg-fill /home/niloco/pics/pawel-blue.jpg";
     SpawnHelper::spawn_short(WALLPAPER)?;
 
-    // Long running stuff (like picom)
-    const COMPOSITOR: &str = "picom";
+    // Long running stuff (compositor, etc)
     let mut proc_handles = SpawnHelper::new();
+
+    const COMPOSITOR: &str = "picom";
     proc_handles.spawn_long(COMPOSITOR)?;
+
+    // notifications
+    const DUNST: &str = "dunst";
+    const BATMON: &str = "/home/niloco/code/rust/battery_monitor/target/release/battery_monitor";
+    proc_handles.spawn_long(DUNST)?;
+    proc_handles.spawn_long(BATMON)?;
 
     Ok(proc_handles)
 }
@@ -53,7 +60,7 @@ fn layouts() -> Vec<Layout> {
 fn main() -> penrose::Result<()> {
     tracing_subscriber::fmt::fmt()
         .pretty()
-        .with_env_filter("trace")
+        .with_env_filter("warn")
         .try_init()
         .map_err(|e| {
             let raw_err = format!("{:?}", e);
@@ -140,6 +147,10 @@ fn main() -> penrose::Result<()> {
     };
 
     let mut wm = new_xcb_backed_window_manager(config, vec![], logging_error_handler())?;
-    let _procs = setup()?;
-    wm.grab_keys_and_run(key_bindings, map! {})
+    // let _procs = setup()?;
+
+    match setup() {
+        Ok(_procs) => wm.grab_keys_and_run(key_bindings, map! {}),
+        Err(e) => Err(e),
+    }
 }
