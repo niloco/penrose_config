@@ -25,7 +25,7 @@ fn setup() -> penrose::Result<SpawnHelper> {
 
     // notifications
     const DUNST: &str = "dunst";
-    const BATMON: &str = "/home/niloco/code/rust/battery_monitor/target/release/battery_monitor";
+    const BATMON: &str = "batmon";
     proc_handles.spawn_long(DUNST)?;
     proc_handles.spawn_long(BATMON)?;
 
