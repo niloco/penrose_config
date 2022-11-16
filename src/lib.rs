@@ -1,14 +1,14 @@
-use std::{
-    collections::HashMap,
-    process::{Child, Command, Stdio},
-};
+use penrose::Error;
+use std::process::{Child, Command, Stdio};
 
-use once_cell::sync::OnceCell;
-use penrose::{
-    core::{bindings::KeyCode, helpers::keycodes_from_xmodmap},
-    xcb::helpers::parse_key_binding,
-    PenroseError, WindowManager, XcbConnection,
-};
+// use penrose::{
+//     core::bindings::parse_keybindings_with_xmodmap,
+//     core::WindowManager,
+//     core::{bindings::keycodes_from_xmodmap, bindings::KeyCode},
+//     x11rb::XcbConn,
+// };
+// use std::collections::HashMap;
+// use once_cell::sync::OnceCell;
 
 #[macro_use]
 extern crate tracing;
@@ -31,7 +31,7 @@ impl SpawnHelper {
             info!("Command {} has run successfully", cmd);
             Ok(())
         } else {
-            Err(PenroseError::Raw(format!(
+            Err(Error::Custom(format!(
                 "Command {} terminated with non-zero exit status: {}",
                 cmd, status
             )))
@@ -94,31 +94,29 @@ impl Drop for SpawnHelper {
 }
 
 // boilerplate for more customizable bindings
-pub fn add_binding(
-    code: &str,
-    key_bindings: &mut HashMap<
-        KeyCode,
-        Box<dyn FnMut(&mut WindowManager<XcbConnection>) -> Result<(), PenroseError>>,
-    >,
-    callback: Box<dyn FnMut(&mut WindowManager<XcbConnection>) -> Result<(), PenroseError>>,
-) -> penrose::Result<()> {
-    static CODES: OnceCell<HashMap<String, u8>> = OnceCell::new();
-    let codes = CODES.get_or_init(|| keycodes_from_xmodmap());
+// pub fn add_binding(
+//     code: &str,
+//     key_bindings: &mut HashMap<
+//         KeyCode,
+//         Box<dyn FnMut(&mut WindowManager<XcbConn>) -> Result<(), Error>>,
+//     >,
+//     callback: Box<dyn FnMut(&mut WindowManager<XcbConn>) -> Result<(), Error>>,
+// ) -> penrose::Result<()> {
+//     static CODES: OnceCell<HashMap<String, u8>> = OnceCell::new();
+//     let codes =
+//         CODES.get_or_init(|| keycodes_from_xmodmap().expect("make sure xmodmap is installed"));
 
-    match parse_key_binding(code.to_string(), &codes) {
-        // would be a lot cleaner with try_insert...
-        Some(key_code) => key_bindings
-            .insert(key_code, callback)
-            // None means empty, aka no dupes
-            .is_none()
-            .then(|| ())
-            .ok_or(PenroseError::Raw(format!(
-                "{} has already been bound",
-                code
-            ))),
-        None => Err(PenroseError::Raw(format!(
-            "{} is not a valid key binding",
-            code
-        ))),
-    }
-}
+//     match parse_keybindings_with_xmodmap(code.to_string(), &codes) {
+//         // would be a lot cleaner with try_insert...
+//         Some(key_code) => key_bindings
+//             .insert(key_code, callback)
+//             // None means empty, aka no dupes
+//             .is_none()
+//             .then(|| ())
+//             .ok_or(Error::Custom(format!("{} has already been bound", code))),
+//         None => Err(Error::Custom(format!(
+//             "{} is not a valid key binding",
+//             code
+//         ))),
+//     }
+// }

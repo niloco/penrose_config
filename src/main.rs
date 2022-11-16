@@ -1,13 +1,20 @@
 #[macro_use]
 extern crate penrose;
 
+use std::collections::HashMap;
+
 use my_penrose::SpawnHelper;
 
 use penrose::{
-    core::{config::Config, helpers::index_selectors, layout, Layout},
-    logging_error_handler,
-    xcb::new_xcb_backed_window_manager,
-    Backward, Forward, Less, More, PenroseError,
+    builtin::actions::{exit, modify_with, send_layout_message, spawn},
+    builtin::layout::{
+        messages::{ExpandMain, IncMain, ShrinkMain},
+        transformers::Gaps,
+        MainAndStack, Monocle,
+    },
+    core::{bindings::parse_keybindings_with_xmodmap, layout::LayoutStack, Config, WindowManager},
+    x11rb::RustConn,
+    Color, Error,
 };
 
 // Spawning background/setup stuff
@@ -33,59 +40,44 @@ fn setup() -> penrose::Result<SpawnHelper> {
 }
 
 // Defining my layouts
-fn layouts() -> Vec<Layout> {
-    vec![
-        layout::Layout::new(
-            "stack",
-            layout::LayoutConf::default(),
-            layout::side_stack,
-            1,
-            0.6,
-        ),
-        layout::Layout::new(
-            "mono",
-            layout::LayoutConf {
-                floating: false,
-                gapless: true,
-                follow_focus: true,
-                allow_wrapping: true,
-            },
-            layout::monocle,
-            1,
-            0.6,
-        ),
+fn layouts() -> LayoutStack {
+    stack![
+        Gaps::wrap(MainAndStack::side(1, 0.6, 0.05), 4, 4),
+        Monocle::boxed()
     ]
 }
 
 fn main() -> penrose::Result<()> {
     tracing_subscriber::fmt::fmt()
         .pretty()
-        .with_env_filter("warn")
+        .with_env_filter("info")
         .try_init()
         .map_err(|e| {
             let raw_err = format!("{:?}", e);
-            PenroseError::Raw(raw_err)
+            Error::Custom(raw_err)
         })?;
 
     // Aesthetic stuff
-    const FOCUSED_BORDER_COLOR: &str = "#bb9af7ff";
-    const UNFOCUSED_BORDER_COLOR: &str = "#a9b1d6ff";
+    const FOCUSED_BORDER_COLOR: u32 = 0xbb9af7ff;
+    const UNFOCUSED_BORDER_COLOR: u32 = 0xa9b1d6ff;
     const BORDER_SIZE: u32 = 4;
-    const BAR_HEIGHT: u32 = 0;
 
-    // Build config
-    let layouts = layouts();
-    let mut config_builder = Config::default().builder();
-    let config = config_builder
-        .border_px(BORDER_SIZE)
-        .focused_border(FOCUSED_BORDER_COLOR)
-        .expect("focused border failed parsing")
-        .unfocused_border(UNFOCUSED_BORDER_COLOR)
-        .expect("unfocused border failed parsing")
-        .layouts(layouts)
-        .bar_height(BAR_HEIGHT)
-        .build()
-        .map_err(|s| PenroseError::Raw(s))?;
+    let config = Config {
+        normal_border: Color::new_from_hex(UNFOCUSED_BORDER_COLOR),
+        focused_border: Color::new_from_hex(FOCUSED_BORDER_COLOR),
+        border_width: BORDER_SIZE,
+        focus_follow_mouse: true,
+        default_layouts: layouts(),
+        tags: ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        floating_classes: Vec::new(),
+        startup_hook: None,
+        event_hook: None,
+        manage_hook: None,
+        refresh_hook: None,
+    };
 
     // Commands for runtime
     const TERMINAL: &str = "alacritty";
@@ -100,57 +92,68 @@ fn main() -> penrose::Result<()> {
     const BACKLIGHT_RAISE: &str = "brightnessctl set +2%";
     const BACKLIGHT_LOWER: &str = "brightnessctl set 2%-";
 
-    let key_bindings = gen_keybindings! {
+    let mut key_bindings = map! {
+        map_keys: |k: &str| k.to_string();
+
         // Program launcher
-        "M-space" => run_external!(LAUNCHER);
+        "M-space" => spawn(LAUNCHER),
 
         // Terminal
-        "M-Return" => run_external!(TERMINAL);
+        "M-Return" => spawn(TERMINAL),
 
         // xf86 things
-        "XF86AudioRaiseVolume" => run_external!(AUDIO_RAISE);
-        "XF86AudioLowerVolume" => run_external!(AUDIO_LOWER);
-        "XF86AudioMute" => run_external!(AUDIO_MUTE);
-        "XF86AudioMicMute" => run_external!(MIC_MUTE);
-        "XF86MonBrightnessUp" => run_external!(BACKLIGHT_RAISE);
-        "XF86MonBrightnessDown" => run_external!(BACKLIGHT_LOWER);
+        "XF86AudioRaiseVolume" => spawn(AUDIO_RAISE),
+        "XF86AudioLowerVolume" => spawn(AUDIO_LOWER),
+        "XF86AudioMute" => spawn(AUDIO_MUTE),
+        "XF86AudioMicMute" => spawn(MIC_MUTE),
+        "XF86MonBrightnessUp" => spawn(BACKLIGHT_RAISE),
+        "XF86MonBrightnessDown" => spawn(BACKLIGHT_LOWER),
 
         // Session lock
-        "M-u" => run_external!(LOCK);
+        "M-u" => spawn(LOCK),
 
         // Exit Penrose (important to remember this one!)
-        "M-S-e" => run_internal!(exit);
+        "M-S-e" => exit(),
 
         // client management
-        "M-j" => run_internal!(cycle_client, Forward);
-        "M-k" => run_internal!(cycle_client, Backward);
-        "M-S-j" => run_internal!(drag_client, Forward);
-        "M-S-k" => run_internal!(drag_client, Backward);
-        "M-w" => run_internal!(kill_client);
+        "M-j" => modify_with(|cs| cs.focus_down()),
+        "M-k" => modify_with(|cs| cs.focus_up()),
+        "M-S-j" => modify_with(|cs| cs.swap_down()),
+        "M-S-k" => modify_with(|cs| cs.swap_up()),
+        "M-w" => modify_with(|cs| cs.kill_focused()),
 
         // workspace management
-        "M-Tab" => run_internal!(toggle_workspace);
-        "M-C-j" => run_internal!(cycle_workspace, Forward);
-        "M-C-k" => run_internal!(cycle_workspace, Backward);
+        // "M-Tab" => modify_with(|cs| , toggle_workspace),
+        // "M-C-j" => modify_with(|cs| , cycle_workspace, Forward),
+        // "M-C-k" => modify_with(|cs| , cycle_workspace, Backward),
 
         // Layout management
-        "M-m" => run_internal!(cycle_layout, Forward);
-        "M-period" => run_internal!(update_max_main, More);
-        "M-comma" => run_internal!(update_max_main, Less);
-        "M-l" => run_internal!(update_main_ratio, More);
-        "M-h" => run_internal!(update_main_ratio, Less);
-
-        map: { "1", "2", "3", "4", "5", "6", "7", "8", "9" } to index_selectors(9) => {
-            "M-{}" => focus_workspace (REF);
-            "M-S-{}" => client_to_workspace (REF);
-        };
+        "M-m" => modify_with(|cs| cs.next_layout()),
+        "M-period" => send_layout_message( || IncMain(1)),
+        "M-comma" => send_layout_message( || IncMain(-1)),
+        "M-l" => send_layout_message( || ExpandMain),
+        "M-h" => send_layout_message( || ShrinkMain),
     };
 
-    let mut wm = new_xcb_backed_window_manager(config, vec![], logging_error_handler())?;
-    // let _procs = setup()?;
+    for tag in &["1", "2", "3", "4", "5", "6", "7", "8", "9"] {
+        key_bindings.extend([
+            (
+                format!("M-{tag}"),
+                modify_with(move |client_set| client_set.focus_tag(tag)),
+            ),
+            (
+                format!("M-S-{tag}"),
+                modify_with(move |client_set| client_set.move_focused_to_tag(tag)),
+            ),
+        ]);
+    }
+
+    let key_bindings = parse_keybindings_with_xmodmap(key_bindings)?;
+    let conn = RustConn::new()?;
+    let wm = WindowManager::new(config, key_bindings, HashMap::new(), conn)?;
 
     match setup() {
-        Ok(_procs) => wm.grab_keys_and_run(key_bindings, map! {}),
+        Ok(_procs) => wm.run(),
         Err(e) => Err(e),
     }
 }
